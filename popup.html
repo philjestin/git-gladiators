@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Git Gladiators</title>
+  <link rel="stylesheet" href="popup.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="title-glow">
+        <h1 class="title">GIT GLADIATORS</h1>
+      </div>
+      <div class="subtitle">⚔️ REPOSITORY CHAMPIONS ⚔️</div>
+    </header>
+
+    <!-- Token Setup Screen -->
+    <div class="token-setup" id="tokenSetup">
+      <div class="token-icon">🔑</div>
+      <div class="token-title">GitHub Token Required</div>
+      <div class="token-desc">
+        For org repos, create a <a href="https://github.com/settings/tokens/new?description=Git%20Gladiators&scopes=repo" target="_blank">Classic Token</a> with <code>repo</code> scope. It works with any repo you're a member of.
+      </div>
+      <input type="password" id="tokenInput" class="token-input" placeholder="ghp_xxxxxxxxxxxx">
+      <button class="token-btn" id="saveTokenBtn">
+        <span>🔓</span> CONNECT
+      </button>
+      <div class="token-error" id="tokenError"></div>
+    </div>
+
+    <!-- Main Leaderboard Screen -->
+    <div class="main-screen" id="mainScreen" style="display: none;">
+      <div class="repo-info" id="repoInfo">
+        <span class="repo-label">ARENA:</span>
+        <span class="repo-name" id="repoName">Detecting...</span>
+        <button class="settings-btn" id="settingsBtn" title="Settings">⚙️</button>
+      </div>
+
+      <!-- Main Navigation Tabs -->
+      <div class="nav-tabs" id="navTabs">
+        <button class="nav-tab active" data-view="leaderboard">🏆 LEADERBOARD</button>
+        <button class="nav-tab" data-view="algorithm">📊 HOW IT WORKS</button>
+      </div>
+
+      <!-- Leaderboard View -->
+      <div class="view-panel" id="leaderboardView">
+        <div class="time-tabs" id="timeTabs">
+          <button class="time-tab" data-period="week">WEEKLY</button>
+          <button class="time-tab" data-period="month">MONTHLY</button>
+          <button class="time-tab active" data-period="all">ALL TIME</button>
+        </div>
+
+        <div class="status-bar" id="statusBar">
+          <div class="loading-dots">
+            <span>.</span><span>.</span><span>.</span>
+          </div>
+          <span id="statusText">Summoning warriors...</span>
+        </div>
+
+        <div class="leaderboard" id="leaderboard">
+          <!-- Populated by JavaScript -->
+        </div>
+
+        <footer class="footer">
+          <button class="refresh-btn" id="refreshBtn">
+            <span class="refresh-icon">↻</span> REFRESH
+          </button>
+        </footer>
+      </div>
+
+      <!-- Algorithm Explanation View -->
+      <div class="view-panel" id="algorithmView" style="display: none;">
+        <div class="algo-content">
+          <section class="algo-section">
+            <h2 class="algo-title">⚡ POWER SCORE</h2>
+            <p class="algo-desc">Your Power Score balances different types of contributions using a weighted formula:</p>
+            
+            <div class="formula-box">
+              <div class="formula-row">
+                <span class="formula-label">Commits</span>
+                <span class="formula-weight">40%</span>
+                <span class="formula-detail">log₁₀(commits + 1) × 100</span>
+              </div>
+              <div class="formula-row">
+                <span class="formula-label">Lines Added</span>
+                <span class="formula-weight add">35%</span>
+                <span class="formula-detail">log₁₀(additions + 1) × 10</span>
+              </div>
+              <div class="formula-row">
+                <span class="formula-label">Lines Deleted</span>
+                <span class="formula-weight del">25%</span>
+                <span class="formula-detail">log₁₀(deletions + 1) × 10</span>
+              </div>
+              <div class="formula-row bonus">
+                <span class="formula-label">Balance Bonus</span>
+                <span class="formula-weight bonus">+10 max</span>
+                <span class="formula-detail">For ~50 lines/commit avg</span>
+              </div>
+            </div>
+
+            <p class="algo-note">📐 <strong>Logarithmic scaling</strong> prevents outliers from dominating. 10× more commits ≠ 10× the score.</p>
+          </section>
+
+          <section class="algo-section">
+            <h2 class="algo-title">🎖️ TITLES</h2>
+            <p class="algo-desc">Titles are awarded based on your contribution patterns:</p>
+            
+            <div class="titles-grid">
+              <div class="title-row">
+                <span class="title-icon" style="color: #FFD700">🏛️ Code Architect</span>
+                <span class="title-req">500+ commits</span>
+              </div>
+              <div class="title-row">
+                <span class="title-icon" style="color: #9B59B6">🧹 The Cleaner</span>
+                <span class="title-req">&gt;60% deletions</span>
+              </div>
+              <div class="title-row">
+                <span class="title-icon" style="color: #3498DB">🌊 Tsunami Coder</span>
+                <span class="title-req">&gt;500 lines/commit</span>
+              </div>
+              <div class="title-row">
+                <span class="title-icon" style="color: #E74C3C">⚡ Rapid Fire</span>
+                <span class="title-req">&lt;20 lines/commit, 50+ commits</span>
+              </div>
+              <div class="title-row">
+                <span class="title-icon" style="color: #2ECC71">📚 Novel Writer</span>
+                <span class="title-req">50K+ lines added</span>
+              </div>
+              <div class="title-row">
+                <span class="title-icon" style="color: #F39C12">🎖️ Veteran</span>
+                <span class="title-req">100+ commits</span>
+              </div>
+              <div class="title-row">
+                <span class="title-icon" style="color: #E67E22">⚔️ Warrior</span>
+                <span class="title-req">50+ commits</span>
+              </div>
+              <div class="title-row">
+                <span class="title-icon" style="color: #1ABC9C">🛡️ Defender</span>
+                <span class="title-req">20+ commits</span>
+              </div>
+              <div class="title-row">
+                <span class="title-icon" style="color: #27AE60">🌱 Rising Star</span>
+                <span class="title-req">10+ commits</span>
+              </div>
+              <div class="title-row">
+                <span class="title-icon" style="color: #95A5A6">🆕 Fresh Blood</span>
+                <span class="title-req">1+ commits</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="algo-section">
+            <h2 class="algo-title">🤔 WHY THIS ALGORITHM?</h2>
+            <div class="algo-reasons">
+              <p>✅ <strong>Commits matter most</strong> — they represent completed units of work</p>
+              <p>✅ <strong>Deletions are valued</strong> — cleanup and refactoring is important</p>
+              <p>✅ <strong>Log scale is fair</strong> — prevents LOC spam from dominating</p>
+              <p>✅ <strong>Balance bonus</strong> — rewards well-sized, atomic commits</p>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

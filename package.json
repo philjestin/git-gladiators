@@ -1,0 +1,17 @@
+{
+  "name": "git-gladiators",
+  "version": "1.0.0",
+  "description": "A fun GitHub leaderboard Chrome extension for software engineers",
+  "private": true,
+  "scripts": {
+    "generate-icons": "node scripts/generate-icons.js"
+  },
+  "keywords": [
+    "chrome-extension",
+    "github",
+    "leaderboard",
+    "developer-tools"
+  ],
+  "author": "",
+  "license": "MIT"
+}
