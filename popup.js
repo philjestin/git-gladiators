@@ -123,9 +123,14 @@ function processContributors(contributors, period) {
     const relevantWeeks = contributor.weeks.filter(week => week.w >= cutoffTimestamp);
     
     // Sum up stats from relevant weeks
-    const commits = relevantWeeks.reduce((sum, week) => sum + week.c, 0);
+    let commits = relevantWeeks.reduce((sum, week) => sum + week.c, 0);
     const additions = relevantWeeks.reduce((sum, week) => sum + week.a, 0);
     const deletions = relevantWeeks.reduce((sum, week) => sum + week.d, 0);
+
+    // Fallback to totalCommits for contributors missing week data (from /contributors endpoint)
+    if (commits === 0 && period === 'all' && contributor.totalCommits) {
+      commits = contributor.totalCommits;
+    }
     
     const score = calculateScore(commits, additions, deletions);
     const titleInfo = assignTitle({ commits, additions, deletions });
