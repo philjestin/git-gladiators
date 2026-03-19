@@ -49,9 +49,10 @@
       <!-- Leaderboard View -->
       <div class="view-panel" id="leaderboardView">
         <div class="time-tabs" id="timeTabs">
-          <button class="time-tab" data-period="week">WEEKLY</button>
+          <button class="time-tab active" data-period="week">WEEKLY</button>
           <button class="time-tab" data-period="month">MONTHLY</button>
-          <button class="time-tab active" data-period="all">ALL TIME</button>
+          <button class="time-tab" data-period="year">YEARLY</button>
+          <button class="time-tab" data-period="all">ALL TIME</button>
         </div>
 
         <div class="status-bar" id="statusBar">
@@ -77,8 +78,8 @@
         <div class="algo-content">
           <section class="algo-section">
             <h2 class="algo-title">⚡ POWER SCORE</h2>
-            <p class="algo-desc">Your Power Score balances different types of contributions using a weighted formula:</p>
-            
+            <p class="algo-desc">Your Power Score combines a weighted base with three advanced modifiers:</p>
+
             <div class="formula-box">
               <div class="formula-row">
                 <span class="formula-label">Commits</span>
@@ -95,14 +96,63 @@
                 <span class="formula-weight del">25%</span>
                 <span class="formula-detail">log₁₀(deletions + 1) × 10</span>
               </div>
-              <div class="formula-row bonus">
-                <span class="formula-label">Balance Bonus</span>
-                <span class="formula-weight bonus">+10 max</span>
-                <span class="formula-detail">For ~50 lines/commit avg</span>
-              </div>
             </div>
 
             <p class="algo-note">📐 <strong>Logarithmic scaling</strong> prevents outliers from dominating. 10× more commits ≠ 10× the score.</p>
+          </section>
+
+          <section class="algo-section">
+            <h2 class="algo-title">🔥 STREAK BONUS</h2>
+            <p class="algo-desc">Rewards consecutive weeks of activity (up to +15 pts):</p>
+            <div class="formula-box">
+              <div class="formula-row">
+                <span class="formula-label">Per Week</span>
+                <span class="formula-weight bonus">+3 pts</span>
+                <span class="formula-detail">Each consecutive active week</span>
+              </div>
+              <div class="formula-row bonus">
+                <span class="formula-label">Maximum</span>
+                <span class="formula-weight bonus">+15 pts</span>
+                <span class="formula-detail">Capped at 5 weeks</span>
+              </div>
+            </div>
+            <p class="algo-note">🔥 <strong>Stay active</strong> — consistent weekly commits build your streak and boost your score.</p>
+          </section>
+
+          <section class="algo-section">
+            <h2 class="algo-title">📊 CONSISTENCY</h2>
+            <p class="algo-desc">Multiplies base score based on how evenly you contribute (0.85× to 1.15×):</p>
+            <div class="formula-box">
+              <div class="formula-row">
+                <span class="formula-label">Even Distribution</span>
+                <span class="formula-weight add">1.15×</span>
+                <span class="formula-detail">Same effort every week</span>
+              </div>
+              <div class="formula-row">
+                <span class="formula-label">Bursty Pattern</span>
+                <span class="formula-weight del">0.85×</span>
+                <span class="formula-detail">All work in one big spike</span>
+              </div>
+            </div>
+            <p class="algo-note">📊 <strong>Needs 3+ active weeks</strong> to kick in. Uses coefficient of variation to measure spread.</p>
+          </section>
+
+          <section class="algo-section">
+            <h2 class="algo-title">♻️ CHURN PENALTY</h2>
+            <p class="algo-desc">Penalizes write-then-rewrite patterns (0 to -10 pts):</p>
+            <div class="formula-box">
+              <div class="formula-row">
+                <span class="formula-label">Churn Detection</span>
+                <span class="formula-weight del">-10 max</span>
+                <span class="formula-detail">High adds followed by high deletes</span>
+              </div>
+              <div class="formula-row bonus">
+                <span class="formula-label">Clean Code</span>
+                <span class="formula-weight add">0 pts</span>
+                <span class="formula-detail">No churn detected</span>
+              </div>
+            </div>
+            <p class="algo-note">♻️ <strong>Needs 2+ active weeks.</strong> Detects when additions in one week get deleted the next.</p>
           </section>
 
           <section class="algo-section">
@@ -159,7 +209,9 @@
               <p>✅ <strong>Commits matter most</strong> — they represent completed units of work</p>
               <p>✅ <strong>Deletions are valued</strong> — cleanup and refactoring is important</p>
               <p>✅ <strong>Log scale is fair</strong> — prevents LOC spam from dominating</p>
-              <p>✅ <strong>Balance bonus</strong> — rewards well-sized, atomic commits</p>
+              <p>🔥 <strong>Streaks reward habit</strong> — showing up every week matters</p>
+              <p>📊 <strong>Consistency multiplier</strong> — steady work beats binge coding</p>
+              <p>♻️ <strong>Churn penalty</strong> — discourages sloppy write-then-rewrite cycles</p>
             </div>
           </section>
         </div>

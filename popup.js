@@ -8,7 +8,11 @@ const SCORING_CONFIG = {
   commitWeight: 0.4,
   additionsWeight: 0.35,
   deletionsWeight: 0.25,
-  linesPerCommitBaseline: 50,
+  streakMax: 15,
+  streakPerWeek: 3,
+  consistencyMin: 0.85,
+  consistencyMax: 1.15,
+  churnPenaltyMax: 10,
 };
 
 // DOM Elements
@@ -31,8 +35,9 @@ const settingsBtn = document.getElementById('settingsBtn');
 // State
 let currentRepo = null;
 let rawContributorData = null;
-let currentPeriod = 'all';
+let currentPeriod = 'week';
 let currentView = 'leaderboard';
+let fetchRequestId = 0;
 
 /**
  * Initialize popup
@@ -107,6 +112,10 @@ function getPeriodCutoff(period) {
       return now - weekMs;
     case 'month':
       return now - (4 * weekMs); // ~4 weeks
+    case 'year': {
+      const jan1 = new Date(new Date().getFullYear(), 0, 1).getTime();
+      return jan1;
+    }
     default:
       return 0; // All time
   }
@@ -117,11 +126,11 @@ function getPeriodCutoff(period) {
  */
 function processContributors(contributors, period) {
   const cutoffTimestamp = getPeriodCutoff(period) / 1000; // Convert to Unix timestamp
-  
+
   const processed = contributors.map(contributor => {
     // Filter weeks by time period
     const relevantWeeks = contributor.weeks.filter(week => week.w >= cutoffTimestamp);
-    
+
     // Sum up stats from relevant weeks
     let commits = relevantWeeks.reduce((sum, week) => sum + week.c, 0);
     const additions = relevantWeeks.reduce((sum, week) => sum + week.a, 0);
@@ -132,9 +141,10 @@ function processContributors(contributors, period) {
       commits = contributor.totalCommits;
     }
     
-    const score = calculateScore(commits, additions, deletions);
+    const score = calculateScore(commits, additions, deletions, relevantWeeks);
     const titleInfo = assignTitle({ commits, additions, deletions });
-    
+    const { streakWeeks } = calculateStreak(relevantWeeks);
+
     return {
       login: contributor.login,
       avatar: contributor.avatar,
@@ -142,6 +152,7 @@ function processContributors(contributors, period) {
       commits,
       additions,
       deletions,
+      streakWeeks,
       score,
       ...titleInfo
     };
@@ -162,25 +173,99 @@ function processContributors(contributors, period) {
 }
 
 /**
- * Calculate balanced score
+ * Calculate streak: consecutive weeks with >= 1 commit, counting back from most recent active week
  */
-function calculateScore(commits, additions, deletions) {
-  const { commitWeight, additionsWeight, deletionsWeight, linesPerCommitBaseline } = SCORING_CONFIG;
-  
+function calculateStreak(relevantWeeks) {
+  const { streakMax, streakPerWeek } = SCORING_CONFIG;
+  const activeWeeks = relevantWeeks.filter(w => w.c > 0);
+  if (activeWeeks.length === 0) return { streakWeeks: 0, streakBonus: 0 };
+
+  // Sort by timestamp descending to count back from most recent
+  const sorted = [...activeWeeks].sort((a, b) => b.w - a.w);
+  const weekSec = 7 * 24 * 60 * 60;
+
+  let streakWeeks = 1;
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i - 1].w - sorted[i].w;
+    // Allow gap of exactly 1 week (GitHub weekly buckets)
+    if (gap <= weekSec + 86400) { // +1 day tolerance
+      streakWeeks++;
+    } else {
+      break;
+    }
+  }
+
+  const streakBonus = Math.min(streakMax, streakWeeks * streakPerWeek);
+  return { streakWeeks, streakBonus };
+}
+
+/**
+ * Calculate consistency multiplier based on coefficient of variation of weekly commits
+ */
+function calculateConsistency(relevantWeeks) {
+  const { consistencyMin, consistencyMax } = SCORING_CONFIG;
+  const activeWeeks = relevantWeeks.filter(w => w.c > 0);
+
+  if (activeWeeks.length < 3) return 1.0;
+
+  const counts = activeWeeks.map(w => w.c);
+  const mean = counts.reduce((s, v) => s + v, 0) / counts.length;
+  const variance = counts.reduce((s, v) => s + (v - mean) ** 2, 0) / counts.length;
+  const stddev = Math.sqrt(variance);
+  const cv = mean > 0 ? stddev / mean : 0;
+
+  // 1.15 - (0.3 * min(1, CV))  →  range [0.85, 1.15]
+  return consistencyMax - ((consistencyMax - consistencyMin) * Math.min(1, cv));
+}
+
+/**
+ * Calculate code churn penalty
+ */
+function calculateChurn(relevantWeeks) {
+  const { churnPenaltyMax } = SCORING_CONFIG;
+  const activeWeeks = relevantWeeks.filter(w => w.c > 0 || w.a > 0 || w.d > 0);
+
+  if (activeWeeks.length < 2) return 0;
+
+  // Sort chronologically
+  const sorted = [...activeWeeks].sort((a, b) => a.w - b.w);
+
+  let totalChurn = 0;
+  let totalAdditions = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    totalAdditions += sorted[i].a;
+    if (i < sorted.length - 1) {
+      totalChurn += Math.min(sorted[i].a, sorted[i + 1].d);
+    }
+  }
+
+  if (totalAdditions === 0) return 0;
+
+  const churnRatio = Math.min(1.0, totalChurn / totalAdditions);
+  return -churnPenaltyMax * churnRatio;
+}
+
+/**
+ * Calculate final score with streak, consistency, and churn
+ */
+function calculateScore(commits, additions, deletions, relevantWeeks) {
+  const { commitWeight, additionsWeight, deletionsWeight } = SCORING_CONFIG;
+
   const logCommits = Math.log10(commits + 1) * 100;
   const logAdditions = Math.log10(additions + 1) * 10;
   const logDeletions = Math.log10(deletions + 1) * 10;
-  
+
   const commitScore = logCommits * commitWeight;
   const additionScore = logAdditions * additionsWeight;
   const deletionScore = logDeletions * deletionsWeight;
-  
-  const avgLinesPerCommit = commits > 0 ? (additions + deletions) / commits : 0;
-  const balanceBonus = avgLinesPerCommit > 0 && avgLinesPerCommit <= linesPerCommitBaseline * 2 
-    ? Math.min(10, 10 * (1 - Math.abs(avgLinesPerCommit - linesPerCommitBaseline) / linesPerCommitBaseline))
-    : 0;
-  
-  return Math.round((commitScore + additionScore + deletionScore + balanceBonus) * 10) / 10;
+
+  const baseScore = commitScore + additionScore + deletionScore;
+  const consistencyMultiplier = calculateConsistency(relevantWeeks);
+  const { streakBonus } = calculateStreak(relevantWeeks);
+  const churnPenalty = calculateChurn(relevantWeeks);
+
+  const finalScore = (baseScore * consistencyMultiplier) + streakBonus + churnPenalty;
+  return Math.round(Math.max(0, finalScore) * 10) / 10;
 }
 
 /**
@@ -304,15 +389,19 @@ async function handleSaveToken() {
  */
 async function fetchAndDisplayStats() {
   if (!currentRepo) return;
-  
+
+  const thisRequest = ++fetchRequestId;
   showStatus('Summoning warriors...');
-  
+
   const result = await sendMessage({
     action: 'fetchStats',
     owner: currentRepo.owner,
     repo: currentRepo.repo
   });
-  
+
+  // Ignore stale responses if a newer request was started
+  if (thisRequest !== fetchRequestId) return;
+
   handleResult(result);
 }
 
@@ -326,6 +415,8 @@ function handleResult(result) {
   }
   
   switch (result.status) {
+    case 'aborted':
+      return; // Request was cancelled, ignore
     case 'success':
       hideStatus();
       rawContributorData = result.data;
@@ -375,8 +466,9 @@ function renderLeaderboard(contributors) {
   leaderboardEl.innerHTML = '';
   
   if (!contributors?.length) {
-    const periodName = currentPeriod === 'week' ? 'this week' : 
-                       currentPeriod === 'month' ? 'this month' : 'all time';
+    const periodName = currentPeriod === 'week' ? 'this week' :
+                       currentPeriod === 'month' ? 'this month' :
+                       currentPeriod === 'year' ? 'this year' : 'all time';
     showEmpty('No activity', `No contributions found for ${periodName}`);
     return;
   }
@@ -424,6 +516,11 @@ function createContributorCard(contributor, index) {
         <span class="stat-icon">−</span>
         <span class="stat-value">${formatNumber(contributor.deletions)}</span>
       </div>
+      ${contributor.streakWeeks > 0 ? `
+      <div class="stat stat-streak">
+        <span class="stat-icon">🔥</span>
+        <span class="stat-value">${contributor.streakWeeks}</span>
+      </div>` : ''}
     </div>
   `;
   

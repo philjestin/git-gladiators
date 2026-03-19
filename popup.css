@@ -519,6 +519,7 @@ body {
 .stat-commits { color: var(--accent-cyan); }
 .stat-add { color: var(--accent-green); }
 .stat-del { color: var(--accent-red); }
+.stat-streak { color: #ff9500; }
 
 .stat-value {
   color: var(--text-primary);

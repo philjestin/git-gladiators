@@ -20,6 +20,12 @@ async function clearToken() {
 
 // --- GitHub API helpers ---
 
+function getNextPageUrl(linkHeader) {
+  if (!linkHeader) return null;
+  const match = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
+  return match ? match[1] : null;
+}
+
 function githubHeaders(token) {
   return {
     'Accept': 'application/vnd.github.v3+json',
@@ -35,10 +41,19 @@ function getWeekStartTimestamp(date) {
   return Math.floor(d.getTime() / 1000);
 }
 
+let currentAbortController = null;
+
 /**
  * Fetch contributor stats from multiple GitHub API sources
  */
 async function fetchContributorStats(owner, repo) {
+  // Abort any previous in-flight request
+  if (currentAbortController) {
+    currentAbortController.abort();
+  }
+  currentAbortController = new AbortController();
+  const { signal } = currentAbortController;
+
   const token = await getToken();
 
   if (!token) {
@@ -49,10 +64,10 @@ async function fetchContributorStats(owner, repo) {
   const baseUrl = `https://api.github.com/repos/${owner}/${repo}`;
 
   try {
-    // Fetch stats/contributors and contributors list in parallel
+    // Fetch stats/contributors (not paginated) and first page of contributors list
     const [statsResponse, listResponse] = await Promise.all([
-      fetch(`${baseUrl}/stats/contributors`, { headers }),
-      fetch(`${baseUrl}/contributors?per_page=100`, { headers }).catch(() => null)
+      fetch(`${baseUrl}/stats/contributors`, { headers, signal }),
+      fetch(`${baseUrl}/contributors?per_page=100`, { headers, signal }).catch(() => null)
     ]);
 
     // Handle stats endpoint errors
@@ -77,7 +92,22 @@ async function fetchContributorStats(owner, repo) {
     }
 
     const statsData = await statsResponse.json();
-    const listData = listResponse?.ok ? await listResponse.json() : [];
+
+    // Paginate through all contributors
+    let listData = [];
+    if (listResponse?.ok) {
+      listData = await listResponse.json();
+      // Check for more pages via Link header
+      let nextUrl = getNextPageUrl(listResponse.headers.get('link'));
+      while (nextUrl) {
+        const nextResponse = await fetch(nextUrl, { headers, signal });
+        if (!nextResponse.ok) break;
+        const nextData = await nextResponse.json();
+        if (!Array.isArray(nextData) || nextData.length === 0) break;
+        listData = listData.concat(nextData);
+        nextUrl = getNextPageUrl(nextResponse.headers.get('link'));
+      }
+    }
 
     // Build contributor map from stats data
     const contributorMap = new Map();
@@ -119,89 +149,135 @@ async function fetchContributorStats(owner, repo) {
 
     const contributors = Array.from(contributorMap.values());
 
-    // Find contributors with commits but no diff stats (additions/deletions both 0)
-    const needsDiffStats = contributors.filter(c => {
-      const totalCommits = c.weeks.reduce((sum, w) => sum + (w.c || 0), 0) || c.totalCommits || 0;
-      const totalAdd = c.weeks.reduce((sum, w) => sum + (w.a || 0), 0);
-      const totalDel = c.weeks.reduce((sum, w) => sum + (w.d || 0), 0);
-      return totalCommits > 0 && totalAdd === 0 && totalDel === 0;
-    });
-
-    // Fetch commit-level stats as fallback for contributors missing diff data
-    if (needsDiffStats.length > 0) {
-      await Promise.all(
-        needsDiffStats.map(c => fillDiffStats(baseUrl, headers, c))
-      );
-    }
+    // Fetch accurate per-commit additions/deletions via GraphQL
+    // The stats/contributors REST API returns unreliable per-week a/d data
+    await applyGraphQLStats(owner, repo, token, signal, contributors);
 
     return { status: 'success', data: contributors };
 
   } catch (error) {
+    if (error.name === 'AbortError') {
+      return { status: 'aborted' };
+    }
     console.error('Error fetching contributor stats:', error);
     return { status: 'error', message: error.message };
   }
 }
 
 /**
- * Fill in missing diff stats by fetching individual commit details
+ * Fetch accurate per-commit stats via GraphQL and apply to contributors.
+ * One query = 100 commits with additions/deletions. ~5 queries covers months of history.
  */
-async function fillDiffStats(baseUrl, headers, contributor) {
-  try {
-    // Fetch recent commits for this user
-    const commitsResponse = await fetch(
-      `${baseUrl}/commits?author=${encodeURIComponent(contributor.login)}&per_page=30`,
-      { headers }
-    );
-
-    if (!commitsResponse.ok) return;
-
-    const commits = await commitsResponse.json();
-    if (!Array.isArray(commits) || commits.length === 0) return;
-
-    // Fetch individual commit details to get stats (limit to 10 for rate limit safety)
-    const details = await Promise.all(
-      commits.slice(0, 10).map(async (commit) => {
-        try {
-          const res = await fetch(`${baseUrl}/commits/${commit.sha}`, { headers });
-          return res.ok ? await res.json() : null;
-        } catch {
-          return null;
+async function applyGraphQLStats(owner, repo, token, signal, contributors) {
+  const query = `
+    query($owner: String!, $repo: String!, $cursor: String, $since: GitTimestamp) {
+      repository(owner: $owner, name: $repo) {
+        defaultBranchRef {
+          target {
+            ... on Commit {
+              history(first: 100, after: $cursor, since: $since) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  additions
+                  deletions
+                  committedDate
+                  author { user { login } }
+                }
+              }
+            }
+          }
         }
-      })
-    );
-
-    // Build week-based stats from commit details
-    const weekMap = new Map();
-    for (const detail of details) {
-      if (!detail?.stats || !detail?.commit?.author?.date) continue;
-
-      const weekStart = getWeekStartTimestamp(new Date(detail.commit.author.date));
-      if (!weekMap.has(weekStart)) {
-        weekMap.set(weekStart, { w: weekStart, a: 0, d: 0, c: 0 });
       }
-      const week = weekMap.get(weekStart);
-      week.a += detail.stats.additions || 0;
-      week.d += detail.stats.deletions || 0;
-      week.c += 1;
+    }
+  `;
+
+  try {
+    // Fetch commits since Jan 1 of current year (up to 2000 commits / 20 pages)
+    const since = new Date(new Date().getFullYear(), 0, 1).toISOString();
+    const allCommits = [];
+    let cursor = null;
+
+    for (let page = 0; page < 20; page++) {
+      const response = await fetch('https://api.github.com/graphql', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        signal,
+        body: JSON.stringify({
+          query,
+          variables: { owner, repo, cursor, since }
+        })
+      });
+
+      if (!response.ok) return; // Fall back to stats API data
+
+      const data = await response.json();
+      const history = data?.data?.repository?.defaultBranchRef?.target?.history;
+      if (!history?.nodes) return;
+
+      allCommits.push(...history.nodes);
+
+      if (!history.pageInfo.hasNextPage) break;
+      cursor = history.pageInfo.endCursor;
     }
 
-    if (contributor.weeks.length === 0) {
-      // No existing week data — use commit-based data directly
-      contributor.weeks = Array.from(weekMap.values());
-    } else {
-      // Merge additions/deletions into existing week entries
-      for (const [weekStart, commitWeek] of weekMap) {
+    if (allCommits.length === 0) return;
+
+    // Group commits by author and week
+    const authorWeekMap = new Map(); // login -> Map(weekStart -> {a, d})
+    for (const commit of allCommits) {
+      const login = commit.author?.user?.login;
+      if (!login) continue;
+
+      const key = login.toLowerCase();
+      const weekStart = getWeekStartTimestamp(new Date(commit.committedDate));
+
+      if (!authorWeekMap.has(key)) {
+        authorWeekMap.set(key, new Map());
+      }
+      const weekMap = authorWeekMap.get(key);
+
+      if (!weekMap.has(weekStart)) {
+        weekMap.set(weekStart, { a: 0, d: 0 });
+      }
+      const week = weekMap.get(weekStart);
+      week.a += commit.additions || 0;
+      week.d += commit.deletions || 0;
+    }
+
+    // Apply accurate a/d data to each contributor's weeks
+    for (const contributor of contributors) {
+      const weekMap = authorWeekMap.get(contributor.login.toLowerCase());
+      if (!weekMap) continue;
+
+      const weekStarts = Array.from(weekMap.keys());
+      const minWeek = Math.min(...weekStarts);
+      const maxWeek = Math.max(...weekStarts);
+
+      // Zero out stats API's a/d within the GraphQL data range
+      for (const week of contributor.weeks) {
+        if (week.w >= minWeek && week.w <= maxWeek) {
+          week.a = 0;
+          week.d = 0;
+        }
+      }
+
+      // Apply GraphQL data
+      for (const [weekStart, stats] of weekMap) {
         const existing = contributor.weeks.find(w => w.w === weekStart);
         if (existing) {
-          existing.a = commitWeek.a;
-          existing.d = commitWeek.d;
+          existing.a = stats.a;
+          existing.d = stats.d;
         } else {
-          contributor.weeks.push(commitWeek);
+          contributor.weeks.push({ w: weekStart, a: stats.a, d: stats.d, c: 0 });
         }
       }
     }
   } catch (e) {
-    console.warn(`Failed to fetch commit stats for ${contributor.login}:`, e);
+    if (e.name === 'AbortError') throw e;
+    console.warn('GraphQL stats fetch failed, using stats API data:', e);
   }
 }
 
